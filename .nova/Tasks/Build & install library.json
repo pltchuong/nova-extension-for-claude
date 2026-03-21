@@ -2,7 +2,7 @@
   "actions" : {
     "build" : {
       "enabled" : true,
-      "script" : "#!\/bin\/sh\nclang -arch arm64 -dynamiclib -framework Cocoa -o nova_extension_claude.dylib nova_extension_claude.m"
+      "script" : "#!\/bin\/sh\nclang -arch arm64 -arch x86_64 -mmacosx-version-min=12.0\n  -dynamiclib -framework Cocoa -o nova_extension_claude.dylib\n  nova_extension_claude.m"
     },
     "run" : {
       "enabled" : true,
