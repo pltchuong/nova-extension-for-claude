@@ -20,6 +20,10 @@ Sends the current file reference to the active terminal. Works from:
 
 Paths are relative to the workspace root. The ref is typed into the first terminal found via BFS (consistently the sidebar terminal).
 
+**Output format:**
+- Cursor on line 42: `@src/tools/utils.py:42`
+- Selection spanning lines 6-9: `@src/tools/utils.py:42-50`
+
 ## How It Works
 
 A single Objective-C dylib loaded into Nova at launch. It:
