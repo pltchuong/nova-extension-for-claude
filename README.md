@@ -15,8 +15,8 @@ The dylib unhides the menu item at **View > Splits > Lock Split** and swizzles `
 Sends the current editor file path and line number to the active terminal. Useful for referencing code when chatting with Claude Code or similar tools.
 
 **Output format:**
-- Cursor on line 42: `@src/tools/external/hightouch.py:42`
-- Selection spanning lines 6-9: `@.gitmodules:6-9`
+- Cursor on line 42: `@src/tools/utils.py:42`
+- Selection spanning lines 6-9: `@src/tools/utils.py:42-50`
 
 Paths are relative to the workspace root.
 
