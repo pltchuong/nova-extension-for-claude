@@ -1,10 +1,8 @@
 #import <Cocoa/Cocoa.h>
-#import <objc/runtime.h>
 
 // Nova injection dylib:
 // 1. Unhides the hidden Lock Split menu item (View > Splits > Lock Split)
 // 2. Cmd+L sends @file:line reference to the active terminal
-// 3. Cmd+Shift+L locks the focused split
 
 #pragma mark - Lock Split
 
@@ -38,8 +36,21 @@ static NSString *workspacePathFromResponder(NSResponder *r) {
                     if (u) return [u path];
                 }
             }
-        } @catch (NSException *e) {}
+        } @catch (NSException *e) {
+            NSLog(@"[Nova+] Failed to read workspace from %@: %@", NSStringFromClass([r class]), e);
+        }
         r = [r nextResponder];
+    }
+    return nil;
+}
+
+static NSView *findViewBFS(NSView *root, BOOL (^predicate)(NSView *)) {
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:root];
+    while ([queue count] > 0) {
+        NSView *view = [queue firstObject];
+        [queue removeObjectAtIndex:0];
+        if (predicate(view)) return view;
+        [queue addObjectsFromArray:[view subviews]];
     }
     return nil;
 }
@@ -59,9 +70,7 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
 
 @implementation NovaFileRefHandler
 
-+ (NSString *)activeEditorFileLine {
-    NSWindow *keyWindow = [NSApp keyWindow];
-    if (!keyWindow) return nil;
++ (NSString *)activeEditorFileLineForWindow:(NSWindow *)keyWindow {
 
     NSResponder *firstResponder = [keyWindow firstResponder];
     if (!firstResponder) return nil;
@@ -71,16 +80,9 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
     if ([firstResponder isKindOfClass:[NSOutlineView class]]) {
         outline = (NSOutlineView *)firstResponder;
     } else if (![NSStringFromClass([firstResponder class]) containsString:@"CodeTextView"]) {
-        NSMutableArray *queue = [NSMutableArray arrayWithObject:[keyWindow contentView]];
-        while ([queue count] > 0) {
-            NSView *view = [queue firstObject];
-            [queue removeObjectAtIndex:0];
-            if ([view isKindOfClass:[NSOutlineView class]] && [(NSOutlineView *)view selectedRow] >= 0) {
-                outline = (NSOutlineView *)view;
-                break;
-            }
-            [queue addObjectsFromArray:[view subviews]];
-        }
+        outline = (NSOutlineView *)findViewBFS([keyWindow contentView], ^BOOL(NSView *v) {
+            return [v isKindOfClass:[NSOutlineView class]] && [(NSOutlineView *)v selectedRow] >= 0;
+        });
     }
 
     if (outline) {
@@ -89,7 +91,9 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
             @try {
                 NSString *p = [[outline itemAtRow:(NSInteger)idx] valueForKey:@"path"];
                 if (p) [paths addObject:p];
-            } @catch (NSException *e) {}
+            } @catch (NSException *e) {
+                NSLog(@"[Nova+] Failed to read path from sidebar item: %@", e);
+            }
         }];
 
         if ([paths count] > 0) {
@@ -98,7 +102,7 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
             for (NSString *p in paths) {
                 [refs addObject:[NSString stringWithFormat:@"@%@", relativePath(p, wsPath)]];
             }
-            return [refs componentsJoinedByString:@" "];
+            return [[refs componentsJoinedByString:@" "] stringByAppendingString:@" "];
         }
     }
 
@@ -128,124 +132,87 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
                 }
             }
         }
-    } @catch (NSException *e) {}
+    } @catch (NSException *e) {
+        NSLog(@"[Nova+] Failed to read editor state: %@", e);
+    }
 
     NSString *filePath = nil;
-    NSString *wsPath = nil;
     NSResponder *r = firstResponder;
     while (r) {
-        if (!filePath) {
-            @try {
-                if ([r respondsToSelector:@selector(document)]) {
-                    id doc = [r valueForKey:@"document"];
-                    if (doc && [doc respondsToSelector:@selector(fileURL)]) {
-                        NSURL *url = [doc valueForKey:@"fileURL"];
-                        if (url) filePath = [url path];
-                    }
+        @try {
+            if ([r respondsToSelector:@selector(document)]) {
+                id doc = [r valueForKey:@"document"];
+                if (doc && [doc respondsToSelector:@selector(fileURL)]) {
+                    NSURL *url = [doc valueForKey:@"fileURL"];
+                    if (url) { filePath = [url path]; break; }
                 }
-            } @catch (NSException *e) {}
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[Nova+] Failed to read document from %@: %@", NSStringFromClass([r class]), e);
         }
-        if (!wsPath) {
-            @try {
-                if ([r respondsToSelector:@selector(workspace)]) {
-                    id ws = [r valueForKey:@"workspace"];
-                    if (ws && [ws respondsToSelector:@selector(workspaceURL)]) {
-                        NSURL *u = [ws valueForKey:@"workspaceURL"];
-                        if (u) wsPath = [u path];
-                    }
-                }
-            } @catch (NSException *e) {}
-        }
-        if (filePath && wsPath) break;
         r = [r nextResponder];
     }
 
     if (!filePath) return nil;
 
+    NSString *wsPath = workspacePathFromResponder(firstResponder);
     NSString *ref = relativePath(filePath, wsPath);
     if (endLineNumber > 0) {
-        return [NSString stringWithFormat:@"@%@:%lu-%lu", ref, (unsigned long)lineNumber, (unsigned long)endLineNumber];
+        return [NSString stringWithFormat:@"@%@:%lu-%lu ", ref, (unsigned long)lineNumber, (unsigned long)endLineNumber];
     }
-    return [NSString stringWithFormat:@"@%@:%lu", ref, (unsigned long)lineNumber];
-}
-
-+ (void)typeIntoTerminal:(NSString *)text {
-    NSWindow *keyWindow = [NSApp keyWindow];
-    if (!keyWindow) return;
-
-    NSMutableArray *queue = [NSMutableArray arrayWithObject:[keyWindow contentView]];
-    while ([queue count] > 0) {
-        NSView *view = [queue firstObject];
-        [queue removeObjectAtIndex:0];
-        if ([NSStringFromClass([view class]) containsString:@"PMTTerminalView"]) {
-            [keyWindow makeFirstResponder:view];
-            [(id)view insertText:text];
-            return;
-        }
-        [queue addObjectsFromArray:[view subviews]];
-    }
+    return [NSString stringWithFormat:@"@%@:%lu ", ref, (unsigned long)lineNumber];
 }
 
 + (void)sendFileRefToTerminal:(id)sender {
-    NSString *ref = [self activeEditorFileLine];
+    NSWindow *keyWindow = [NSApp keyWindow];
+    if (!keyWindow) { NSBeep(); return; }
+
+    NSString *ref = [self activeEditorFileLineForWindow:keyWindow];
     if (!ref) { NSBeep(); return; }
-    [self typeIntoTerminal:ref];
+
+    NSView *terminal = findViewBFS([keyWindow contentView], ^BOOL(NSView *v) {
+        return [NSStringFromClass([v class]) containsString:@"PMTTerminalView"];
+    });
+    if (terminal) {
+        [keyWindow makeFirstResponder:terminal];
+        [(id)terminal insertText:ref];
+    }
 }
 
 @end
 
 #pragma mark - Setup
 
-static void installKeyboardHandlers(void) {
+static void installFileRefShortcut(void) {
     // Remove Cmd+L from Nova's built-in Select Line
-    NSMenu *mainMenu = [NSApp mainMenu];
-    if (mainMenu) {
-        for (NSMenuItem *item in [mainMenu itemArray]) {
-            if (![item hasSubmenu]) continue;
-            for (NSMenuItem *sub in [[item submenu] itemArray]) {
-                if ([sub action] == @selector(selectLine:) &&
-                    [[sub keyEquivalent] isEqualToString:@"l"] &&
-                    ([sub keyEquivalentModifierMask] & NSEventModifierFlagCommand)) {
-                    [sub setKeyEquivalent:@""];
-                }
-                if ([sub hasSubmenu]) {
-                    for (NSMenuItem *subsub in [[sub submenu] itemArray]) {
-                        if ([subsub action] == @selector(selectLine:) &&
-                            [[subsub keyEquivalent] isEqualToString:@"l"]) {
-                            [subsub setKeyEquivalent:@""];
-                        }
+    for (NSMenuItem *item in [[NSApp mainMenu] itemArray]) {
+        if (![item hasSubmenu]) continue;
+        for (NSMenuItem *sub in [[item submenu] itemArray]) {
+            if ([sub action] == @selector(selectLine:) &&
+                [[sub keyEquivalent] isEqualToString:@"l"] &&
+                ([sub keyEquivalentModifierMask] & NSEventModifierFlagCommand)) {
+                [sub setKeyEquivalent:@""];
+            }
+            if ([sub hasSubmenu]) {
+                for (NSMenuItem *subsub in [[sub submenu] itemArray]) {
+                    if ([subsub action] == @selector(selectLine:) &&
+                        [[subsub keyEquivalent] isEqualToString:@"l"]) {
+                        [subsub setKeyEquivalent:@""];
                     }
                 }
             }
         }
-
-        // Add menu item to Editor menu for discoverability
-        for (NSMenuItem *item in [mainMenu itemArray]) {
-            if (![[item title] isEqualToString:@"Editor"] || ![item hasSubmenu]) continue;
-            NSMenu *editorMenu = [item submenu];
-            [editorMenu addItem:[NSMenuItem separatorItem]];
-            NSMenuItem *refItem = [[NSMenuItem alloc] initWithTitle:@"Send File Ref to Terminal"
-                                                            action:@selector(sendFileRefToTerminal:)
-                                                     keyEquivalent:@""];
-            [refItem setTarget:[NovaFileRefHandler class]];
-            [editorMenu addItem:refItem];
-            break;
-        }
     }
 
-    // Single event monitor for both shortcuts
+    // Event monitor for Cmd+L (file ref to terminal)
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
-        if (!([event modifierFlags] & NSEventModifierFlagCommand)) return event;
-        if ([event modifierFlags] & (NSEventModifierFlagOption | NSEventModifierFlagControl)) return event;
+        NSEventModifierFlags flags = [event modifierFlags];
+        if (!(flags & NSEventModifierFlagCommand)) return event;
+        if (flags & (NSEventModifierFlagShift | NSEventModifierFlagOption | NSEventModifierFlagControl)) return event;
         if (![[event charactersIgnoringModifiers] isEqualToString:@"l"]) return event;
 
-        if (!([event modifierFlags] & NSEventModifierFlagShift)) {
-            [NovaFileRefHandler sendFileRefToTerminal:nil];
-            return nil;
-        } else {
-            [NSApp sendAction:@selector(toggleLocked:) to:nil from:nil];
-            return nil;
-        }
+        [NovaFileRefHandler sendFileRefToTerminal:nil];
+        return nil;
     }];
 }
 
@@ -253,6 +220,6 @@ __attribute__((constructor))
 static void novaInjectInit(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         unhideLockSplit();
-        installKeyboardHandlers();
+        installFileRefShortcut();
     });
 }
