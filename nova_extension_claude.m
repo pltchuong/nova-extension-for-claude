@@ -15,7 +15,7 @@ static void unhideLockSplit(void) {
         for (NSMenuItem *sub in [[item submenu] itemArray]) {
             if (![[sub title] isEqualToString:@"Splits"] || ![sub hasSubmenu]) continue;
             for (NSMenuItem *splitItem in [[sub submenu] itemArray]) {
-                if ([splitItem action] == @selector(toggleLocked:) && [splitItem isHidden]) {
+                if ([splitItem action] == @selector(toggleLocked:)) {
                     [splitItem setHidden:NO];
                 }
             }
