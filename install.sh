@@ -2,8 +2,9 @@
 # Patch Nova.app to load the injection dylib on every launch.
 # Re-run after Nova updates.
 
-SRC_DYLIB="/Volumes/work/code/others/nova-extention/nova_inject.dylib"
-DST_DYLIB="/Applications/Nova.app/Contents/Frameworks/nova_inject.dylib"
+SCRIPT_DIR="${0:a:h}"
+SRC_DYLIB="$SCRIPT_DIR/nova_extension_claude.dylib"
+DST_DYLIB="/Applications/Nova.app/Contents/Frameworks/nova_extension_claude.dylib"
 PLIST="/Applications/Nova.app/Contents/Info.plist"
 
 if [[ ! -f "$SRC_DYLIB" ]]; then
