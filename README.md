@@ -47,7 +47,7 @@ No bytes are patched in the Nova binary. The dylib is copied into `Nova.app/Cont
 ## Build
 
 ```sh
-clang -arch arm64 -dynamiclib -framework Cocoa -o nova_extension_claude.dylib nova_extension_claude.m
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=12.0 -dynamiclib -framework Cocoa -o nova_extension_claude.dylib nova_extension_claude.m
 ```
 
 ## Install
@@ -62,12 +62,11 @@ Re-run after Nova updates.
 
 - **Custom keyboard shortcuts don't work.** Nova strips key equivalents from dynamically added menu items, and `NSEvent` local monitors only receive key events that aren't already consumed by the menu system. Cmd+L works only because we first remove it from Nova's built-in Select Line binding, freeing the event for our monitor to catch. Shortcuts like Cmd+Shift+K or Cmd+Shift+L that have no existing menu binding to hijack are silently consumed by Nova's internal key handling before our monitor sees them.
 - **Shortcuts are not configurable via Nova's Key Bindings settings.** Nova's settings UI reads from its own internal binding registry. Our shortcut is injected at runtime, bypassing that system entirely.
-- **Unlock Split only works via menu.** Lock Split is enabled by unhiding the menu item, and Nova handles the keyboard shortcut natively. However, unlocking via the keyboard shortcut doesn't work — Nova's `toggleLocked:` appears to check the call context and only unlocks when invoked from a direct menu click. Use View > Splits > Unlock Split.
+- **Unlock Split only works via menu.** The unhidden menu item shows a keyboard shortcut for Lock Split, but the corresponding Unlock Split shortcut doesn't fire — same root cause as above (no existing menu binding to hijack). Use View > Splits > Unlock Split.
 - **Cmd+L always targets the first terminal found via BFS.** This consistently hits the sidebar terminal, not the bottom panel. If your layout differs, the target terminal may not be the one you expect.
 - **Nova updates will overwrite the patch.** The dylib and `Info.plist` changes live inside `Nova.app`. Any Nova update replaces the app bundle, requiring `./install.sh` to be re-run.
+- **Nova is currently ad-hoc signed**, which allows dylib injection. If a future update adds library validation (rejecting dylibs not signed by Panic), this approach will stop working entirely.
 
 ## Compatibility
 
-- Tested with Nova (ad-hoc signed, arm64)
-- Requires macOS on Apple Silicon
-- Won't work if Nova enables hardened runtime with library validation in a future update
+- Universal binary (arm64 + x86_64), macOS 12+

@@ -27,7 +27,8 @@ cp "$SRC_DYLIB" "$DST_DYLIB"
     -c "Add :LSEnvironment:DYLD_INSERT_LIBRARIES string $DST_DYLIB" \
     "$PLIST"
 
-# Re-sign the app (plist change invalidates the signature)
+# Re-sign the dylib and app (plist change invalidates the signature)
+codesign -f -s - "$DST_DYLIB"
 codesign -f -s - /Applications/Nova.app
 
 # Rebuild launch services database
