@@ -20,10 +20,6 @@ Sends the current file reference to the active terminal. Works from:
 
 Paths are relative to the workspace root. A trailing space is appended so you can continue typing.
 
-**Output format:**
-- Cursor on line 42: `@src/tools/utils.py:42 `
-- Selection spanning lines 6-9: `@src/tools/utils.py:6-9 `
-
 ## How It Works
 
 A single Objective-C dylib loaded into Nova at launch. It:
