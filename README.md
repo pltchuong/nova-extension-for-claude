@@ -2,6 +2,14 @@
 
 Enhancements for [Nova](https://nova.app) by Panic, injected via a dylib. Designed for use with Claude Code.
 
+### Before
+
+![Before](before.gif)
+
+### After
+
+![After](after.gif)
+
 ## Features
 
 ### 1. Lock Split
