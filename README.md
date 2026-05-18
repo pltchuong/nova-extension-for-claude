@@ -28,6 +28,16 @@ Sends the current file reference to the active terminal. Works from:
 
 Paths are relative to the workspace root. A trailing space is appended so you can continue typing.
 
+### 3. Voice Dictation (Hold Fn)
+
+Hold the **Fn key** to dictate voice into the active terminal. Uses macOS on-device speech recognition (no API key, no network required).
+
+- Hold Fn to start recording
+- Release Fn to stop and insert the transcribed text into the terminal
+- First use will prompt for Microphone and Speech Recognition permissions
+
+Requires macOS 13+. If macOS intercepts the Fn key for Emoji/Globe, go to **System Settings > Keyboard** and change "Press globe key to" to "Do Nothing".
+
 ## How It Works
 
 A single Objective-C dylib loaded into Nova at launch. It:
@@ -40,6 +50,8 @@ A single Objective-C dylib loaded into Nova at launch. It:
    - Walks the responder chain for `document.fileURL` and `workspace.workspaceURL` to build a relative path
    - Finds `PMTTerminalView` via BFS and types the reference via `insertText:`
 
+3. **Hold Fn**: A `flagsChanged` event monitor detects `NSEventModifierFlagFunction`. On press, starts `SFSpeechRecognizer` with a live audio tap from `AVAudioEngine`. On release, stops recording and inserts the best transcription into `PMTTerminalView` via `insertText:`.
+
 No bytes are patched in the Nova binary. The dylib is copied into `Nova.app/Contents/Frameworks/` and loaded via `LSEnvironment` in `Info.plist`. The app is re-signed ad-hoc after patching.
 
 ## Files
@@ -51,7 +63,7 @@ No bytes are patched in the Nova binary. The dylib is copied into `Nova.app/Cont
 ## Build
 
 ```sh
-clang -arch arm64 -arch x86_64 -mmacosx-version-min=12.0 -dynamiclib -framework Cocoa -o nova_extension_claude.dylib nova_extension_claude.m
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -dynamiclib -framework Cocoa -framework Speech -framework AVFoundation -o nova_extension_claude.dylib nova_extension_claude.m
 ```
 
 ## Install
@@ -69,8 +81,9 @@ Re-run after Nova updates.
 - **Unlock Split only works via menu.** The unhidden menu item shows a keyboard shortcut for Lock Split, but the corresponding Unlock Split shortcut doesn't fire — same root cause as above (no existing menu binding to hijack). Use View > Splits > Unlock Split.
 - **Cmd+L always targets the first terminal found via BFS.** This consistently hits the sidebar terminal, not the bottom panel. If your layout differs, the target terminal may not be the one you expect.
 - **Nova updates will overwrite the patch.** The dylib and `Info.plist` changes live inside `Nova.app`. Any Nova update replaces the app bundle, requiring `./install.sh` to be re-run.
+- **Fn key may be intercepted by macOS.** If "Press globe key to" is set to "Show Emoji & Symbols" in System Settings > Keyboard, the system consumes the event before Nova sees it. Change it to "Do Nothing".
 - **Nova is currently ad-hoc signed**, which allows dylib injection. If a future update adds library validation (rejecting dylibs not signed by Panic), this approach will stop working entirely.
 
 ## Compatibility
 
-- Universal binary (arm64 + x86_64), macOS 12+
+- Universal binary (arm64 + x86_64), macOS 13+

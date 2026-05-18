@@ -1,8 +1,11 @@
 #import <Cocoa/Cocoa.h>
+#import <Speech/Speech.h>
+#import <AVFoundation/AVFoundation.h>
 
 // Nova injection dylib:
 // 1. Unhides the hidden Lock Split menu item (View > Splits > Lock Split)
 // 2. Cmd+L sends @file:line reference to the active terminal
+// 3. Hold Fn to dictate voice into the active terminal
 
 #pragma mark - Lock Split
 
@@ -181,6 +184,124 @@ static NSString *relativePath(NSString *absPath, NSString *wsPath) {
 
 @end
 
+#pragma mark - Voice Dictation (Hold Fn)
+
+@interface NovaDictationHandler : NSObject
+@property (nonatomic, strong) SFSpeechRecognizer *recognizer;
+@property (nonatomic, strong) SFSpeechAudioBufferRecognitionRequest *request;
+@property (nonatomic, strong) SFSpeechRecognitionTask *recognitionTask;
+@property (nonatomic, strong) AVAudioEngine *audioEngine;
+@property (nonatomic, assign) BOOL isRecording;
+@property (nonatomic, copy) NSString *lastTranscription;
++ (instancetype)shared;
+- (void)startRecording;
+- (void)stopRecordingAndInsert;
+@end
+
+@implementation NovaDictationHandler
+
++ (instancetype)shared {
+    static NovaDictationHandler *instance;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[NovaDictationHandler alloc] init];
+    });
+    return instance;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale currentLocale]];
+        _audioEngine = [[AVAudioEngine alloc] init];
+        _isRecording = NO;
+    }
+    return self;
+}
+
+- (void)requestPermissionsIfNeeded {
+    [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
+        if (status != SFSpeechRecognizerAuthorizationStatusAuthorized) {
+            NSLog(@"[Nova+] Speech recognition not authorized: %ld", (long)status);
+        }
+    }];
+}
+
+- (void)startRecording {
+    if (self.isRecording) return;
+    if (!self.recognizer.isAvailable) {
+        NSLog(@"[Nova+] Speech recognizer not available");
+        NSBeep();
+        return;
+    }
+
+    self.lastTranscription = nil;
+    self.request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
+    self.request.shouldReportPartialResults = YES;
+
+    AVAudioInputNode *inputNode = self.audioEngine.inputNode;
+    AVAudioFormat *format = [inputNode outputFormatForBus:0];
+
+    self.recognitionTask = [self.recognizer recognitionTaskWithRequest:self.request resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
+        if (result) {
+            self.lastTranscription = result.bestTranscription.formattedString;
+        }
+        if (error) {
+            NSLog(@"[Nova+] Recognition error: %@", error.localizedDescription);
+        }
+    }];
+
+    [inputNode installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+        [self.request appendAudioPCMBuffer:buffer];
+    }];
+
+    NSError *err = nil;
+    [self.audioEngine prepare];
+    [self.audioEngine startAndReturnError:&err];
+    if (err) {
+        NSLog(@"[Nova+] Audio engine failed to start: %@", err.localizedDescription);
+        NSBeep();
+        return;
+    }
+
+    self.isRecording = YES;
+    NSLog(@"[Nova+] Dictation started");
+}
+
+- (void)stopRecordingAndInsert {
+    if (!self.isRecording) return;
+
+    [self.audioEngine.inputNode removeTapOnBus:0];
+    [self.audioEngine stop];
+    [self.request endAudio];
+    self.isRecording = NO;
+    NSLog(@"[Nova+] Dictation stopped");
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *text = self.lastTranscription;
+        if (!text || [text length] == 0) {
+            NSLog(@"[Nova+] No transcription result");
+            return;
+        }
+
+        NSWindow *keyWindow = [NSApp keyWindow];
+        if (!keyWindow) return;
+
+        NSView *terminal = findViewBFS([keyWindow contentView], ^BOOL(NSView *v) {
+            return [NSStringFromClass([v class]) containsString:@"PMTTerminalView"];
+        });
+        if (terminal) {
+            [keyWindow makeFirstResponder:terminal];
+            [(id)terminal insertText:text];
+        }
+
+        self.recognitionTask = nil;
+        self.request = nil;
+    });
+}
+
+@end
+
 #pragma mark - Setup
 
 static void installFileRefShortcut(void) {
@@ -216,10 +337,33 @@ static void installFileRefShortcut(void) {
     }];
 }
 
+static void installDictation(void) {
+    [[NovaDictationHandler shared] requestPermissionsIfNeeded];
+
+    // Fn key sends flagsChanged events with no character — detect via modifier flags
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *event) {
+        // Fn key is indicated by NSEventModifierFlagFunction
+        BOOL fnDown = ([event modifierFlags] & NSEventModifierFlagFunction) != 0;
+        // Ignore if other modifiers are held
+        NSEventModifierFlags otherMods = NSEventModifierFlagCommand | NSEventModifierFlagOption |
+                                         NSEventModifierFlagControl | NSEventModifierFlagShift;
+        if ([event modifierFlags] & otherMods) return event;
+
+        NovaDictationHandler *handler = [NovaDictationHandler shared];
+        if (fnDown && !handler.isRecording) {
+            [handler startRecording];
+        } else if (!fnDown && handler.isRecording) {
+            [handler stopRecordingAndInsert];
+        }
+        return event;
+    }];
+}
+
 __attribute__((constructor))
 static void novaInjectInit(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         unhideLockSplit();
         installFileRefShortcut();
+        installDictation();
     });
 }
