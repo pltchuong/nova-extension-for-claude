@@ -28,15 +28,16 @@ Sends the current file reference to the active terminal. Works from:
 
 Paths are relative to the workspace root. A trailing space is appended so you can continue typing.
 
-### 3. Voice Dictation (Hold Fn)
+### 3. System Dictation in Terminal (Mic key)
 
-Hold the **Fn key** to dictate voice into the active terminal. Uses macOS on-device speech recognition (no API key, no network required).
+Enables macOS system dictation to work in Nova's terminal. Press the mic/dictation key (Fn or globe key, depending on your settings) and speak. Text streams into the terminal as you talk, with Apple's built-in auto-correction.
 
-- Hold Fn to start recording
-- Release Fn to stop and insert the transcribed text into the terminal
-- First use will prompt for Microphone and Speech Recognition permissions
+- Press mic key to start dictating
+- Text appears in real-time as you speak
+- When dictation commits, streaming text is replaced with the final corrected result
+- Same quality as dictation in any native text field
 
-Requires macOS 13+. If macOS intercepts the Fn key for Emoji/Globe, go to **System Settings > Keyboard** and change "Press globe key to" to "Do Nothing".
+No extra permissions needed beyond the standard dictation setup in System Settings.
 
 ## How It Works
 
@@ -50,20 +51,23 @@ A single Objective-C dylib loaded into Nova at launch. It:
    - Walks the responder chain for `document.fileURL` and `workspace.workspaceURL` to build a relative path
    - Finds `PMTTerminalView` via BFS and types the reference via `insertText:`
 
-3. **Hold Fn**: A `flagsChanged` event monitor detects `NSEventModifierFlagFunction`. On press, starts `SFSpeechRecognizer` with a live audio tap from `AVAudioEngine`. On release, stops recording and inserts the best transcription into `PMTTerminalView` via `insertText:`.
+3. **System Dictation**: Patches `PMTCanvas` (the actual first responder in Nova's terminal) at runtime:
+   - Fixes `selectedRange` to return `{0, 0}` instead of `{NSNotFound, 0}`, which is what macOS checks before activating dictation
+   - Intercepts `setMarkedText:` (streaming dictation updates) and replays them as terminal input using the original `insertText:`, erasing previous streaming text with DEL characters (0x7F) before each update
+   - Wraps `insertText:replacementRange:` (final commit) to erase streaming text before inserting the corrected result
 
 No bytes are patched in the Nova binary. The dylib is copied into `Nova.app/Contents/Frameworks/` and loaded via `LSEnvironment` in `Info.plist`. The app is re-signed ad-hoc after patching.
 
 ## Files
 
-- `nova_extension_claude.m` — Objective-C source
-- `nova_extension_claude.dylib` — Compiled dylib (arm64)
-- `install.sh` — Patches Nova.app to load the dylib on every launch
+- `nova_extension_claude.m` - Objective-C source
+- `nova_extension_claude.dylib` - Compiled dylib (arm64 + x86_64)
+- `install.sh` - Patches Nova.app to load the dylib on every launch
 
 ## Build
 
 ```sh
-clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -dynamiclib -framework Cocoa -framework Speech -framework AVFoundation -o nova_extension_claude.dylib nova_extension_claude.m
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=12.0 -dynamiclib -framework Cocoa -lobjc -o nova_extension_claude.dylib nova_extension_claude.m
 ```
 
 ## Install
@@ -76,14 +80,14 @@ Re-run after Nova updates.
 
 ## Limitations
 
-- **Custom keyboard shortcuts don't work.** Nova strips key equivalents from dynamically added menu items, and `NSEvent` local monitors only receive key events that aren't already consumed by the menu system. Cmd+L works only because we first remove it from Nova's built-in Select Line binding, freeing the event for our monitor to catch. Shortcuts like Cmd+Shift+K or Cmd+Shift+L that have no existing menu binding to hijack are silently consumed by Nova's internal key handling before our monitor sees them.
+- **Custom keyboard shortcuts don't work.** Nova strips key equivalents from dynamically added menu items, and `NSEvent` local monitors only receive key events that aren't already consumed by the menu system. Cmd+L works only because we first remove it from Nova's built-in Select Line binding, freeing the event for our monitor to catch.
 - **Shortcuts are not configurable via Nova's Key Bindings settings.** Nova's settings UI reads from its own internal binding registry. Our shortcut is injected at runtime, bypassing that system entirely.
-- **Unlock Split only works via menu.** The unhidden menu item shows a keyboard shortcut for Lock Split, but the corresponding Unlock Split shortcut doesn't fire — same root cause as above (no existing menu binding to hijack). Use View > Splits > Unlock Split.
+- **Unlock Split only works via menu.** The unhidden menu item shows a keyboard shortcut for Lock Split, but the corresponding Unlock Split shortcut doesn't fire.
 - **Cmd+L always targets the first terminal found via BFS.** This consistently hits the sidebar terminal, not the bottom panel. If your layout differs, the target terminal may not be the one you expect.
 - **Nova updates will overwrite the patch.** The dylib and `Info.plist` changes live inside `Nova.app`. Any Nova update replaces the app bundle, requiring `./install.sh` to be re-run.
-- **Fn key may be intercepted by macOS.** If "Press globe key to" is set to "Show Emoji & Symbols" in System Settings > Keyboard, the system consumes the event before Nova sees it. Change it to "Do Nothing".
-- **Nova is currently ad-hoc signed**, which allows dylib injection. If a future update adds library validation (rejecting dylibs not signed by Panic), this approach will stop working entirely.
+- **Dictation requires mic key configuration.** If "Press globe key to" is set to "Show Emoji & Symbols" in System Settings > Keyboard, change it to "Start Dictation" or configure a dictation shortcut.
+- **Nova is currently ad-hoc signed**, which allows dylib injection. If a future update adds library validation, this approach will stop working.
 
 ## Compatibility
 
-- Universal binary (arm64 + x86_64), macOS 13+
+- Universal binary (arm64 + x86_64), macOS 12+
