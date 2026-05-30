@@ -202,12 +202,45 @@ static void patchTerminalDictation(void) {
         }));
     }
 
-    // Suppress setMarkedText: to prevent whitespace during dictation streaming
+    // Stream dictation text by inserting via original insertText: and erasing with DEL (0x7F)
+    static const char kMarkedLenKey;
+
+    Method canvasInsertText = class_getInstanceMethod(canvasClass, @selector(insertText:replacementRange:));
+    IMP origInsert = method_getImplementation(canvasInsertText);
+
+    method_setImplementation(canvasInsertText, imp_implementationWithBlock(^(id self, id string, NSRange range) {
+        NSNumber *prevLen = objc_getAssociatedObject(self, &kMarkedLenKey);
+        if (prevLen && [prevLen unsignedIntegerValue] > 0) {
+            NSUInteger n = [prevLen unsignedIntegerValue];
+            NSMutableString *del = [NSMutableString stringWithCapacity:n];
+            for (NSUInteger i = 0; i < n; i++) [del appendFormat:@"%C", (unichar)0x7F];
+            ((void (*)(id, SEL, id, NSRange))origInsert)(self, @selector(insertText:replacementRange:), del, NSMakeRange(NSNotFound, 0));
+            objc_setAssociatedObject(self, &kMarkedLenKey, @0, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        ((void (*)(id, SEL, id, NSRange))origInsert)(self, @selector(insertText:replacementRange:), string, range);
+    }));
+
     Method canvasSetMarked = class_getInstanceMethod(canvasClass, @selector(setMarkedText:selectedRange:replacementRange:));
-    if (canvasSetMarked) {
-        method_setImplementation(canvasSetMarked, imp_implementationWithBlock(^(id self, id string, NSRange selectedRange, NSRange replacementRange) {
-        }));
-    }
+    method_setImplementation(canvasSetMarked, imp_implementationWithBlock(^(id self, id string, NSRange selRange, NSRange replRange) {
+        NSString *text = string;
+        if ([string isKindOfClass:[NSAttributedString class]]) {
+            text = [(NSAttributedString *)string string];
+        }
+
+        NSNumber *prevLen = objc_getAssociatedObject(self, &kMarkedLenKey);
+        if (prevLen && [prevLen unsignedIntegerValue] > 0) {
+            NSUInteger n = [prevLen unsignedIntegerValue];
+            NSMutableString *del = [NSMutableString stringWithCapacity:n];
+            for (NSUInteger i = 0; i < n; i++) [del appendFormat:@"%C", (unichar)0x7F];
+            ((void (*)(id, SEL, id, NSRange))origInsert)(self, @selector(insertText:replacementRange:), del, NSMakeRange(NSNotFound, 0));
+        }
+
+        if ([text length] > 0) {
+            ((void (*)(id, SEL, id, NSRange))origInsert)(self, @selector(insertText:replacementRange:), text, NSMakeRange(NSNotFound, 0));
+        }
+
+        objc_setAssociatedObject(self, &kMarkedLenKey, @([text length]), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }));
 
     NSLog(@"[Nova+] Patched PMTCanvas for system dictation");
 }
