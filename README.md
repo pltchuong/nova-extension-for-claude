@@ -43,7 +43,7 @@ This is the same dictation engine used in every native macOS text field, just pa
 
 A single Objective-C dylib loaded into Nova at launch via `DYLD_INSERT_LIBRARIES`.
 
-**Dictation fix**: Nova's terminal uses `PMTCanvas` as the first responder. macOS dictation refuses to activate because `selectedRange` returns `{NSNotFound, 0}` (no valid cursor). The dylib patches `PMTCanvas` to return a valid range, then intercepts `setMarkedText:` (Apple's streaming dictation protocol) and replays the text into the terminal using DEL character (0x7F) erasure between updates. When dictation commits via `insertText:`, the streaming text is erased and replaced with the final auto-corrected result.
+**Dictation fix**: Nova's terminal uses `PMTCanvas` as the first responder. macOS dictation refuses to activate because `selectedRange` returns `{NSNotFound, 0}` (no valid cursor) and `hasMarkedText` gets stuck returning YES after typing. The dylib patches `PMTCanvas` to fix both, then intercepts `setMarkedText:` (Apple's streaming dictation protocol) and replays the text into the terminal using DEL character (0x7F) erasure between updates. When dictation commits via `insertText:`, the streaming text is erased and replaced with the final auto-corrected result. You can freely mix typing and dictation.
 
 No bytes are patched in the Nova binary. The dylib is copied into `Nova.app/Contents/Frameworks/` and loaded via `LSEnvironment` in `Info.plist`. The app is re-signed ad-hoc.
 

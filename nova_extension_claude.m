@@ -202,6 +202,14 @@ static void patchTerminalDictation(void) {
         }));
     }
 
+    // Fix hasMarkedText - gets stuck YES after typing, blocking dictation reactivation
+    Method hasMarkedMethod = class_getInstanceMethod(canvasClass, @selector(hasMarkedText));
+    if (hasMarkedMethod) {
+        method_setImplementation(hasMarkedMethod, imp_implementationWithBlock(^BOOL(id self) {
+            return NO;
+        }));
+    }
+
     // Stream dictation text by inserting via original insertText: and erasing with DEL (0x7F)
     static const char kMarkedLenKey;
 
